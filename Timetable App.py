@@ -31,7 +31,6 @@ st.sidebar.markdown("""
 - Zero faculty overlapping
 - Zero student overlapping
 - Strict classroom capacity limits per week
-- Continuous slots without lunch break
 - Reduced Sunday timings
 """)
 
@@ -180,7 +179,7 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
             for d in range(num_days):
                 model.Add(sum(x[c, w, d, s] for s in range(num_slots)) <= max_daily)
                 
-    # Constraint 6: Sunday specific timings (Sundays until 15:45 -> Block Slot 5 & 6)
+    # Constraint 6: Sunday specific timings (Sundays until 15:00 -> Block Slot 5 & 6)
     for c in range(num_sections):
         for w in range(num_weeks):
             model.Add(x[c, w, 6, 4] == 0) # Slot 5 (Evening)
@@ -202,11 +201,11 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
         # Reconstruct Schedule & Assign specific Classrooms
         slot_labels = [
             "09:00 - 10:30 (Slot 1)",
-            "10:45 - 12:15 (Slot 2)",
-            "12:30 - 14:00 (Slot 3)",
-            "14:15 - 15:45 (Slot 4)",
-            "16:00 - 17:30 (Slot 5)",
-            "17:45 - 19:15 (Slot 6)"
+            "10:30 - 12:00 (Slot 2)",
+            "12:00 - 13:30 (Slot 3)",
+            "13:30 - 15:00 (Slot 4)",
+            "15:00 - 16:30 (Slot 5)",
+            "16:30 - 18:00 (Slot 6)"
         ]
         
         for w in range(num_weeks):
@@ -332,11 +331,11 @@ with c3:
 
 # Insight 4: Pie chart of Morning vs Evening sessions
 with c4:
-    # Updated categorization based on new timings
+    # Updated categorization based on new continuous timings
     def categorize_slot(idx):
-        if idx in [0, 1]: return 'Morning (09:00 - 12:15)'
-        elif idx == 2: return 'Afternoon (12:30 - 14:00)'
-        else: return 'Evening (14:15 - 19:15)'
+        if idx in [0, 1]: return 'Morning (09:00 - 12:00)'
+        elif idx in [2, 3]: return 'Afternoon (12:00 - 15:00)'
+        else: return 'Evening (15:00 - 18:00)'
         
     schedule_df['Shift Category'] = schedule_df['Slot_Idx'].apply(categorize_slot)
     time_usage = schedule_df.groupby('Shift Category').size().reset_index(name='Count')
