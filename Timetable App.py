@@ -36,45 +36,54 @@ st.sidebar.markdown("""
 """)
 
 # ==========================================
-# 2. DATA PROCESSING (CSV PARSER)
+# 2. DATA PROCESSING (EXCEL PARSER)
 # ==========================================
 @st.cache_data
-def process_uploaded_files(uploaded_files, max_cap):
+def process_uploaded_excel(uploaded_file, max_cap):
     courses_raw = []
     
-    # Parse each CSV file robustly
-    for file in uploaded_files:
-        lines = file.getvalue().decode("utf-8", errors="ignore").splitlines()
+    # Read the Excel workbook
+    xls = pd.ExcelFile(uploaded_file)
+    
+    # Parse each sheet robustly
+    for sheet_name in xls.sheet_names:
+        # Load sheet without headers so we can find where the actual data starts
+        df_sheet = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+        
         faculty_name = "Unknown Faculty"
         course_name = "Unknown Course"
         header_idx = -1
         
-        for i, line in enumerate(lines):
-            cols = [c.strip() for c in line.split(',')]
+        for i, row in df_sheet.iterrows():
+            # Convert row to list of strings, treating NaN as empty string
+            cols = [str(val).strip() if pd.notna(val) else "" for val in row.values]
+            
             if len(cols) > 1 and "Faculty Name" in cols[0]:
                 faculty_name = cols[1] if cols[1] else "Unknown Faculty"
                 
             # Find the header row for students (looking for SN, Serial No., or Student ID)
-            if "SN" in cols[0] or "Serial No." in cols[0] or ("Student ID" in line):
+            if "SN" in cols[0] or "Serial No." in cols[0] or "Student ID" in cols:
                 header_idx = i
                 # Look backwards from the header to find the course name
                 for j in range(i-1, -1, -1):
-                    c_name = lines[j].split(',')[0].strip()
-                    if c_name and "Group Mail ID" not in c_name and "Faculty Name" not in c_name:
-                        course_name = c_name
-                        break
+                    prev_cols = [str(val).strip() if pd.notna(val) else "" for val in df_sheet.iloc[j].values]
+                    if prev_cols and prev_cols[0]:
+                        c_name = prev_cols[0]
+                        if "Group Mail ID" not in c_name and "Faculty Name" not in c_name:
+                            course_name = c_name
+                            break
                 break
                 
         # Extract students
         students = []
         if header_idx != -1:
-            headers = [h.strip() for h in lines[header_idx].split(',')]
+            headers = [str(val).strip() if pd.notna(val) else "" for val in df_sheet.iloc[header_idx].values]
             if "Student ID" in headers:
                 sid_idx = headers.index("Student ID")
-                for line in lines[header_idx+1:]:
-                    cols = [c.strip() for c in line.split(',')]
-                    if len(cols) > sid_idx and cols[sid_idx]:
-                        students.append(cols[sid_idx])
+                for i in range(header_idx + 1, len(df_sheet)):
+                    val = df_sheet.iloc[i, sid_idx]
+                    if pd.notna(val) and str(val).strip():
+                        students.append(str(val).strip())
                         
         courses_raw.append({
             "Course": course_name,
@@ -225,19 +234,19 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
 # 4. DASHBOARD UI
 # ==========================================
 st.title("MBA Timetable Optimization Dashboard")
-st.markdown("This dashboard uses **Google OR-Tools** to resolve scheduling conflicts. It explicitly enforces a **Student Conflict Matrix**, dynamically calculating shared enrolments across uploaded CSVs to ensure no student is ever double-booked.")
+st.markdown("This dashboard uses **Google OR-Tools** to resolve scheduling conflicts. It explicitly enforces a **Student Conflict Matrix**, dynamically calculating shared enrolments across uploaded files to ensure no student is ever double-booked.")
 
-# File Uploader
-st.markdown("### 📂 Upload IIM Ranchi Course Data")
-uploaded_files = st.file_uploader("Upload the 27 Course CSV files", accept_multiple_files=True, type=['csv'])
+# File Uploader - Now accepts a single Excel file
+st.markdown("### 📂 Upload IIM Ranchi Course Data (Master Excel File)")
+uploaded_file = st.file_uploader("Upload the Master Course Excel file (.xlsx) containing all sheets", type=['xlsx', 'xls'])
 
-if not uploaded_files:
-    st.info("Please upload your course CSV files to generate the timetable.")
+if not uploaded_file:
+    st.info("Please upload your Master Course Excel file to generate the timetable.")
     st.stop()
 
 # Process Data & Run Optimization
-with st.spinner("Processing Data & Solving Network Constraints..."):
-    course_data, sections_data = process_uploaded_files(uploaded_files, max_capacity)
+with st.spinner("Processing Excel Sheets & Solving Network Constraints..."):
+    course_data, sections_data = process_uploaded_excel(uploaded_file, max_capacity)
     
     # Generate conflict metrics for UI
     total_students = len(set(x for l in course_data['Students_List'] for x in l))
