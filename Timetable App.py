@@ -128,7 +128,7 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
     
     num_weeks = 10
     num_days = 7  # 0: Mon, ..., 6: Sun
-    num_slots = 6 # 1.5 hr slots (Continuous setup until evening)
+    num_slots = 7 # 1.5 hr slots (Continuous setup until 19:30)
     
     num_sections = len(sections_df)
     
@@ -159,7 +159,7 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
                 for s in range(num_slots):
                     model.Add(sum(x[c, w, d, s] for c in indices) <= 1)
                     
-    # Constraint 4: NEW - Student Overlapping (Conflict Matrix)
+    # Constraint 4: Student Overlapping (Conflict Matrix)
     # If two sections share even 1 student, they cannot be scheduled at the exact same time
     for c1 in range(num_sections):
         for c2 in range(c1 + 1, num_sections):
@@ -172,25 +172,27 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
                         for s in range(num_slots):
                             # Both cannot be true (1) at the same time
                             model.AddImplication(x[c1, w, d, s], x[c2, w, d, s].Not())
-                    
+                            
     # Constraint 5: Max Daily Sessions per Section
     for c in range(num_sections):
         for w in range(num_weeks):
             for d in range(num_days):
                 model.Add(sum(x[c, w, d, s] for s in range(num_slots)) <= max_daily)
                 
-    # Constraint 6: Sunday specific timings (Sundays until 15:00 -> Block Slot 5 & 6)
+    # Constraint 6: Sunday specific timings (Sundays until 15:00 -> Block Slots 5, 6 & 7)
     for c in range(num_sections):
         for w in range(num_weeks):
             model.Add(x[c, w, 6, 4] == 0) # Slot 5 (Evening)
             model.Add(x[c, w, 6, 5] == 0) # Slot 6 (Late Evening)
+            model.Add(x[c, w, 6, 6] == 0) # Slot 7 (Night)
             
     # Soft Objective: Minimize weekend classes (Sat/Sun = days 5 and 6)
     weekend_penalty = sum(x[c, w, d, s] for c in range(num_sections) for w in range(num_weeks) for d in [5, 6] for s in range(num_slots))
     model.Minimize(weekend_penalty)
     
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 45.0 # Increased timeout due to heavy student constraints
+    # Increased timeout significantly to allow resolution of complex student overlap conflicts
+    solver.parameters.max_time_in_seconds = 300.0
     
     status = solver.Solve(model)
         
@@ -205,7 +207,8 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
             "12:00 - 13:30 (Slot 3)",
             "13:30 - 15:00 (Slot 4)",
             "15:00 - 16:30 (Slot 5)",
-            "16:30 - 18:00 (Slot 6)"
+            "16:30 - 18:00 (Slot 6)",
+            "18:00 - 19:30 (Slot 7)"
         ]
         
         for w in range(num_weeks):
@@ -234,7 +237,7 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
 # 4. DASHBOARD UI
 # ==========================================
 st.title("MBA Timetable Optimization Dashboard")
-st.markdown("This dashboard uses **Google OR-Tools** to resolve scheduling conflicts. It explicitly enforces a **Student Conflict Matrix**, dynamically calculating shared enrolments across uploaded files to ensure no student is ever double-booked.")
+st.markdown("This dashboard uses **Google OR-Tools** to resolve scheduling conflicts and generate an optimized timetable based on classroom capacity and faculty availability.")
 
 # File Uploader - Now accepts a single Excel file
 st.markdown("### 📂 Upload IIM Ranchi Course Data (Master Excel File)")
@@ -245,7 +248,7 @@ if not uploaded_file:
     st.stop()
 
 # Process Data & Run Optimization
-with st.spinner("Processing Excel Sheets & Solving Network Constraints..."):
+with st.spinner("Processing Excel Sheets & Solving Network Constraints... This may take up to 5 minutes."):
     course_data, sections_data = process_uploaded_excel(uploaded_file, max_capacity)
     
     # Generate conflict metrics for UI
@@ -261,7 +264,8 @@ with st.spinner("Processing Excel Sheets & Solving Network Constraints..."):
 total_capacity_slots = 0
 for w in range(1, 11):
     cap = initial_rooms if w < reduction_week else reduced_rooms
-    total_capacity_slots += (cap * 39) # 6 slots * 6 days + 3 slots on Sunday = 39 slots per week per room
+    # 7 slots * 6 days (Mon-Sat) + 4 slots on Sunday = 46 slots per week per room
+    total_capacity_slots += (cap * 46) 
 
 total_sections = len(sections_data)
 total_sessions_scheduled = len(schedule_df)
@@ -277,7 +281,7 @@ if solver_status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
     col4.metric("Unscheduled/Conflicts", f"{unscheduled_count} Sessions", delta="Feasible Schedule ✅", delta_color="normal")
 else:
     col4.metric("Unscheduled/Conflicts", "INFEASIBLE", delta="Try relaxing constraints ❌", delta_color="inverse")
-    st.error("The solver could not find a feasible schedule. With the strict 'No Student Overlap' constraint, you likely need to increase Maximum Classrooms or reduce the Max Daily limit.")
+    st.error("The solver could not find a feasible schedule. You likely need to increase Maximum Classrooms or reduce the Max Daily limit.")
     st.stop()
 
 st.markdown("---")
@@ -305,7 +309,7 @@ with c2:
     capacity_data = []
     for w in range(1, 11):
         cap = initial_rooms if w < reduction_week else reduced_rooms
-        capacity_data.append({"Week": w, "Capacity Limit": cap * 39})
+        capacity_data.append({"Week": w, "Capacity Limit": cap * 46})
     cap_df = pd.DataFrame(capacity_data)
     
     usage_vs_cap = pd.merge(weekly_usage, cap_df, on="Week", how="right").fillna(0)
@@ -335,7 +339,7 @@ with c4:
     def categorize_slot(idx):
         if idx in [0, 1]: return 'Morning (09:00 - 12:00)'
         elif idx in [2, 3]: return 'Afternoon (12:00 - 15:00)'
-        else: return 'Evening (15:00 - 18:00)'
+        else: return 'Evening (15:00 - 19:30)'
         
     schedule_df['Shift Category'] = schedule_df['Slot_Idx'].apply(categorize_slot)
     time_usage = schedule_df.groupby('Shift Category').size().reset_index(name='Count')
