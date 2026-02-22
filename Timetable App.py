@@ -29,9 +29,9 @@ st.sidebar.markdown("""
 **Hard Constraints Enforced:**
 - 20 Sessions per course section
 - Zero faculty overlapping
-- **NEW:** Zero student overlapping (Conflict Matrix)
+- Zero student overlapping
 - Strict classroom capacity limits per week
-- **NEW:** Slot 3 at 12:30-14:00 (Lunch 14:00-15:00)
+- Continuous slots without lunch break
 - Reduced Sunday timings
 """)
 
@@ -129,7 +129,7 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
     
     num_weeks = 10
     num_days = 7  # 0: Mon, ..., 6: Sun
-    num_slots = 5 # 1.5 hr slots
+    num_slots = 6 # 1.5 hr slots (Continuous setup until evening)
     
     num_sections = len(sections_df)
     
@@ -180,11 +180,11 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
             for d in range(num_days):
                 model.Add(sum(x[c, w, d, s] for s in range(num_slots)) <= max_daily)
                 
-    # Constraint 6: Sunday specific timings (Sundays until 5:00 PM -> Block Slot 4 & 5)
+    # Constraint 6: Sunday specific timings (Sundays until 15:45 -> Block Slot 5 & 6)
     for c in range(num_sections):
         for w in range(num_weeks):
-            model.Add(x[c, w, 6, 3] == 0) # Slot 4 (Afternoon)
             model.Add(x[c, w, 6, 4] == 0) # Slot 5 (Evening)
+            model.Add(x[c, w, 6, 5] == 0) # Slot 6 (Late Evening)
             
     # Soft Objective: Minimize weekend classes (Sat/Sun = days 5 and 6)
     weekend_penalty = sum(x[c, w, d, s] for c in range(num_sections) for w in range(num_weeks) for d in [5, 6] for s in range(num_slots))
@@ -204,8 +204,9 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
             "09:00 - 10:30 (Slot 1)",
             "10:45 - 12:15 (Slot 2)",
             "12:30 - 14:00 (Slot 3)",
-            "15:00 - 16:30 (Slot 4)",
-            "16:45 - 18:15 (Slot 5)"
+            "14:15 - 15:45 (Slot 4)",
+            "16:00 - 17:30 (Slot 5)",
+            "17:45 - 19:15 (Slot 6)"
         ]
         
         for w in range(num_weeks):
@@ -261,7 +262,7 @@ with st.spinner("Processing Excel Sheets & Solving Network Constraints..."):
 total_capacity_slots = 0
 for w in range(1, 11):
     cap = initial_rooms if w < reduction_week else reduced_rooms
-    total_capacity_slots += (cap * 33) # 33 slots per week per room
+    total_capacity_slots += (cap * 39) # 6 slots * 6 days + 3 slots on Sunday = 39 slots per week per room
 
 total_sections = len(sections_data)
 total_sessions_scheduled = len(schedule_df)
@@ -305,7 +306,7 @@ with c2:
     capacity_data = []
     for w in range(1, 11):
         cap = initial_rooms if w < reduction_week else reduced_rooms
-        capacity_data.append({"Week": w, "Capacity Limit": cap * 33})
+        capacity_data.append({"Week": w, "Capacity Limit": cap * 39})
     cap_df = pd.DataFrame(capacity_data)
     
     usage_vs_cap = pd.merge(weekly_usage, cap_df, on="Week", how="right").fillna(0)
@@ -335,7 +336,7 @@ with c4:
     def categorize_slot(idx):
         if idx in [0, 1]: return 'Morning (09:00 - 12:15)'
         elif idx == 2: return 'Afternoon (12:30 - 14:00)'
-        else: return 'Evening (15:00 - 18:15)'
+        else: return 'Evening (14:15 - 19:15)'
         
     schedule_df['Shift Category'] = schedule_df['Slot_Idx'].apply(categorize_slot)
     time_usage = schedule_df.groupby('Shift Category').size().reset_index(name='Count')
