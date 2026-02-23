@@ -231,11 +231,10 @@ def solve_timetable(sections_df, init_rooms, red_rooms, red_week, max_daily):
             model.Add(y[g, w, 6, 6] == 0) # Slot 7 (Night)
             
     # Soft Objectives
-    weekend_penalty = sum(y[g, w, d, s] for g in range(num_groups) for w in range(num_weeks) for d in [5, 6] for s in range(num_slots))
     student_overlap_penalty = sum(shared * var for shared, var in tracked_overlaps)
     
-    # Priority: First fix student overlaps, then reduce weekend classes
-    model.Minimize(weekend_penalty + 100 * student_overlap_penalty)
+    # Priority: Minimize student overlaps (Weekend penalty removed to allow regular Sat/Sun scheduling)
+    model.Minimize(student_overlap_penalty)
     
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 300.0
